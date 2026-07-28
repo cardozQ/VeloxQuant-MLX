@@ -1,0 +1,119 @@
+name: release
+
+# Automatic version bump on merge to master, driven by Conventional Commits
+# (see CONTRIBUTING.md "Commit conventions"). python-semantic-release parses
+# commits since the last tag to decide whether a release is warranted and
+# at what semver level (feat -> minor, fix/perf -> patch, feat!/BREAKING
+# CHANGE -> major bump-of-minor while major_on_zero=false in pyproject.toml).
+#
+# Runs on macOS because `mlx` (this package's core dependency) only installs
+# on Apple Silicon -- a release gate that cannot import the package it is
+# releasing is not a real gate. This is more expensive per-minute than an
+# ubuntu runner; that cost is accepted deliberately here.
+#
+# The bump commit is tagged `chore(release): ... [skip ci]` so it does not
+# retrigger this same workflow.
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Guard against the bump commit re-triggering this workflow, and against
+    # running on commits authored by the release bot itself.
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + dev/release dependencies
+        run: |
+          pip install -e ".[dev]"
+          # mlx_lm is not in [project.dependencies] but 35 non-test modules
+          # (including veloxquant_mlx/__init__.py's own import chain) import
+          # it at module level, so the package cannot even be imported
+          # without it -- required here for the test suite to collect at all.
+          pip install mlx-lm
+
+      - name: Run test suite (release gate)
+        run: python -m pytest veloxquant_mlx/tests -q
+
+      - name: Configure git identity for the release commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine next version (dry run)
+        id: version
+        run: |
+          # Do NOT discard stderr or swallow the exit code here. PSR exits 2
+          # with "no release will be made" when there is genuinely nothing to
+          # release, but exits non-zero for config/parse errors too. Treating
+          # every failure as "no release" is how a `build_command = false`
+          # config error silently skipped four releases (0.41.0 -> 0.42.0).
+          set +e
+          NEXT_VERSION="$(semantic-release version --print 2>version_err.txt)"
+          STATUS=$?
+          set -e
+          cat version_err.txt
+
+          if [ "$STATUS" -ne 0 ] && ! grep -qi "no release will be made" version_err.txt; then
+            echo "::error::semantic-release failed to compute a version (exit ${STATUS}). See stderr above."
+            exit 1
+          fi
+
+          echo "next_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: No release needed
+        if: steps.version.outputs.next_version == ''
+        run: echo "No releasable commits since the last tag (docs/chore/test-only). Skipping."
+
+      - name: Bump pyproject.toml/__init__.py and prepend CHANGELOG entry (no commit yet)
+        if: steps.version.outputs.next_version != ''
+        run: semantic-release version --no-commit --no-tag --no-push --no-vcs-release
+
+      - name: Sync README badges + landing page (version + live test count)
+        if: steps.version.outputs.next_version != ''
+        run: python scripts/sync_release_badges.py
+
+      - name: Commit, tag, and push the release
+        if: steps.version.outputs.next_version != ''
+        run: |
+          # landing/ is included because sync_release_badges.py rewrites the
+          # hero pill version and the meta-description/test-count claims there;
+          # omitting it would silently discard that sync every release.
+          git add pyproject.toml veloxquant_mlx/__init__.py CHANGELOG.md README.md \
+                  landing/index.html landing/assets/main.js
+          git commit -m "chore(release): ${{ steps.version.outputs.next_version }} [skip ci]"
+          # Annotated (-a), not lightweight: `git push --follow-tags` pushes ONLY
+          # annotated tags, so a lightweight tag here is created locally on the
+          # runner and then silently dropped -- the branch lands but the tag never
+          # reaches the remote, and `semantic-release publish` finds nothing to
+          # publish and exits 0. That is exactly how v0.42.0 shipped untagged.
+          git tag -a "v${{ steps.version.outputs.next_version }}" \
+                  -m "v${{ steps.version.outputs.next_version }}"
+          git push origin master
+          # Push the tag explicitly rather than relying on --follow-tags, and fail
+          # the job if it does not land, so a missing tag can never be silent again.
+          git push origin "v${{ steps.version.outputs.next_version }}"
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.next_version != ''
+        run: semantic-release publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

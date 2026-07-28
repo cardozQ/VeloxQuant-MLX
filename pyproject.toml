@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "VeloxQuant-MLX"
-version = "0.41.0"
+version = "0.42.1"
 description = "Fast KV-cache quantization for Apple Silicon (MLX) — 41 research-adapted compression methods, from TurboQuant and KIVI to A2ATS, with Metal kernels"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -47,6 +47,7 @@ dev = [
     "psutil>=5.9",
     "build>=1.2",
     "twine>=5.0",
+    "python-semantic-release>=9.15",
 ]
 
 [project.urls]
@@ -73,3 +74,38 @@ filterwarnings = ["ignore::DeprecationWarning"]
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["veloxquant_mlx/__init__.py:__version__"]
+# Empty string, not `false`: python-semantic-release >=10 validates this as a
+# string, and a bool raises a pydantic error that `semantic-release version
+# --print` reports on stderr. The release workflow swallows that stderr and
+# falls back to an empty version, so the bad value made every run silently
+# take the "No release needed" branch instead of failing loudly.
+build_command = ""
+commit_parser = "conventional"
+commit_message = "chore(release): {version} [skip ci]"
+tag_format = "v{version}"
+# Both are required to stay on 0.x. `major_on_zero = false` alone only stops a
+# *breaking change* from forcing 1.0.0; without `allow_zero_version` PSR still
+# graduates the project to 1.0.0 on the next release.
+major_on_zero = false
+allow_zero_version = true
+
+[tool.semantic_release.branches.main]
+match = "master"
+
+[tool.semantic_release.changelog]
+changelog_file = "CHANGELOG.md"
+exclude_commit_patterns = [
+    "^chore\\(release\\):",
+]
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["feat", "fix", "perf", "refactor", "docs", "chore", "test", "build", "ci", "style"]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
