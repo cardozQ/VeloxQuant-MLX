@@ -137,11 +137,11 @@ sequenceDiagram
 veloxquant_mlx/
 ├── __init__.py          # Public API exports
 ├── __main__.py          # CLI: precompute, benchmark, recommend
-├── core/                # ABCs, dataclasses, registry, constants
+├── core/                # ABCs (10), dataclasses, registry, constants
 ├── cache/               # 46 KVCache wrappers (one per method)
 ├── quantizers/          # 46 quantizer implementations
 ├── handlers/            # Chain-of-responsibility pipeline stages
-├── metal/               # Apple Metal MSL GPU kernels
+├── metal/               # Apple Metal MSL GPU kernels (13 files)
 ├── allocators/          # Bit allocation strategies (RateQuant, etc.)
 ├── integration/         # mlx_lm / mlx_vlm monkey-patching
 ├── preconditioners/     # Rotation / JL sketch transforms
@@ -153,8 +153,10 @@ veloxquant_mlx/
 ├── dsa/                 # Data structures (AVL, heap, ring buffer)
 ├── math/                # MLX-free math utilities
 ├── weight/              # Weight quantization (experimental)
+├── cli/                 # CLI commands (benchmark, precompute, recommend)
+├── benchmarks/          # Benchmark harnesses (attend, metal, model KV)
 ├── tools/               # Mac recommender
-└── tests/               # 100+ test files (1417 tests)
+└── tests/               # 110+ test files (~1400 tests)
 ```
 
 ---
@@ -168,8 +170,8 @@ veloxquant_mlx/
 | 1.1 | `README.md` | Project goals, supported methods, 3-line API |
 | 1.2 | `pyproject.toml` | Dependencies, CLI entry points, build system |
 | 1.3 | `veloxquant_mlx/__init__.py` | Public API surface |
-| 1.4 | `veloxquant_mlx/core/abstractions.py` | The 8 ABCs everything plugs into |
-| 1.5 | `veloxquant_mlx/core/context.py` | Key data types: QuantizationContext, EncodedVector |
+| 1.4 | `veloxquant_mlx/core/abstractions.py` | The 10 ABCs everything plugs into |
+| 1.5 | `veloxquant_mlx/core/context.py` | Key data types: QuantizationContext, EncodedVector, TransformResult |
 | 1.6 | `veloxquant_mlx/core/registry.py` | How methods register themselves |
 
 ### Phase 2: Configuration & Wiring
@@ -178,7 +180,8 @@ veloxquant_mlx/
 |------|---------|---------------|
 | 2.1 | `veloxquant_mlx/cache/base.py` | KVCacheConfig, KVCacheFactory, KVCacheBuilder |
 | 2.2 | `veloxquant_mlx/integration/mlx_lm_patch.py` | How it monkey-patches mlx_lm |
-| 2.3 | `veloxquant_mlx/quantizers/base.py` | QuantizerFactory — how method names resolve to classes |
+| 2.3 | `veloxquant_mlx/integration/mlx_vlm_patch.py` | How it patches mlx-vlm for vision-language models |
+| 2.4 | `veloxquant_mlx/quantizers/base.py` | QuantizerFactory — how method names resolve to classes |
 
 ### Phase 3: Reference Method — TurboQuant RVQ
 
@@ -207,8 +210,15 @@ veloxquant_mlx/
 | 5.1 | `veloxquant_mlx/metal/kernels.py` | Kernel re-export facade |
 | 5.2 | `veloxquant_mlx/metal/_vecinfer.py` | VecInfer GPU quantize/dequant |
 | 5.3 | `veloxquant_mlx/metal/_rabitq_attend.py` | Fused RaBitQ attention (1.78x speedup) |
-| 5.4 | `veloxquant_mlx/metal/_bit_packing.py` | Bit pack/unpack on GPU |
-| 5.5 | `veloxquant_mlx/metal/fused_sdpa.py` | Fused dequant + SDPA |
+| 5.4 | `veloxquant_mlx/metal/_rabitq_encode.py` | RaBitQ GPU encode |
+| 5.5 | `veloxquant_mlx/metal/_rabitq_values.py` | Nibble-packed RaBitQ value storage |
+| 5.6 | `veloxquant_mlx/metal/_rabitq.py` | RaBitQ kernel helpers |
+| 5.7 | `veloxquant_mlx/metal/_rvq_attend.py` | Fused RVQ decode + attention |
+| 5.8 | `veloxquant_mlx/metal/_bit_packing.py` | Bit pack/unpack on GPU |
+| 5.9 | `veloxquant_mlx/metal/_scalar_quant.py` | GPU scalar quant |
+| 5.10 | `veloxquant_mlx/metal/_comm_vq.py` | CommVQ GPU kernels |
+| 5.11 | `veloxquant_mlx/metal/_qjl.py` | QJL GPU encode |
+| 5.12 | `veloxquant_mlx/metal/fused_sdpa.py` | Fused dequant + SDPA |
 
 ### Phase 6: Advanced Topics
 
@@ -219,16 +229,17 @@ veloxquant_mlx/
 | 6.3 | `veloxquant_mlx/preconditioners/` | Rotation and JL sketch transforms |
 | 6.4 | `veloxquant_mlx/codebooks/` | Codebook strategies (scalar, adaptive) |
 | 6.5 | `veloxquant_mlx/dsa/` | Custom data structures (AVL tree, heap, ring buffer) |
-| 6.6 | `veloxquant_mlx/tools/mac_recommender.py` | Method recommendation engine |
+| 6.6 | `veloxquant_mlx/tools/mac_recommender.py` | Method recommendation engine (RAM/Mac-aware) |
+| 6.7 | `veloxquant_mlx/cli/` + `veloxquant_mlx/benchmarks/` | CLI commands and benchmark harnesses |
 
 ### Phase 7: Testing & Benchmarks
 
 | Step | What to Learn |
 |------|---------------|
 | 7.1 | Run tests: `python -m pytest veloxquant_mlx/tests/ -v` |
-| 7.2 | Study `veloxquant_mlx/tests/conftest.py` — shared fixtures |
-| 7.3 | Read `tests/conftest.py` + any test for a quantizer |
-| 7.4 | Browse `benchmark_scripts/` — how methods are benchmarked |
+| 7.2 | Study `veloxquant_mlx/tests/conftest.py` + `tests/conftest.py` — shared fixtures |
+| 7.3 | Read any test for a quantizer + `tests/non_metal/` for CI-safe tests |
+| 7.4 | Browse `benchmark_scripts/` + `veloxquant_mlx/benchmarks/` — how methods are benchmarked |
 | 7.5 | Run CLI: `python -m veloxquant_mlx recommend` |
 
 ### Phase 8: Documentation & Research
@@ -237,24 +248,26 @@ veloxquant_mlx/
 |------|---------------|
 | 8.1 | Read `CITATIONS.md` — full bibliography of 41 methods |
 | 8.2 | Browse `paper/research/surveys/` — method surveys |
-| 8.3 | Read `blogs/overview.md` + `blogs/metal-kernels.md` |
-| 8.4 | Browse `docs/` — internal design docs |
+| 8.3 | Read `blogs/overview.md` + `blogs/metal-kernels.md` + `blogs/turboquant-metal-kernels.md` |
+| 8.4 | Browse `docs/` — internal design docs (7 documents) |
 | 8.5 | Explore `docs-site/` — Docusaurus documentation website |
+| 8.6 | Read `PERFORMANCE_LEARNING_PLAN.md` — performance engineering deep-dive |
 
 ---
 
 ## Resources
 
 | Resource | Location |
-|---|---|
+|---|---|---|
 | README | `README.md` |
 | Blog posts | `blogs/` (9 posts) |
 | Internal docs | `docs/` (7 documents) |
 | Research surveys | `paper/research/surveys/` (21 versions) |
 | Changelog | `CHANGELOG.md` |
 | Bibliography | `CITATIONS.md` |
+| Performance learning plan | `PERFORMANCE_LEARNING_PLAN.md` |
 | Docusaurus site | `docs-site/` (TypeScript, deployable) |
-| Metal benchmarks | `scripts/metal_rabitq_attend_bench.py` |
+| Metal benchmarks | `scripts/metal_rabitq_attend_bench.py`, `scripts/metal_rabitq_encode_bench.py` |
 | Knowledge base | `turbo_quant_kb/` |
 | CI config | `.github/workflows/` |
 | Optimization findings | `OPTIMIZATION_FINDINGS.md` |
